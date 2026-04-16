@@ -3,14 +3,15 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.runtime_config import load_runtime_env
+
+load_runtime_env()
+
 from src.graph.cargo_graph import build_graph
 from src.graph.state import HumanDecision, TelemetryReading
-
-load_dotenv()
 
 app = FastAPI(
     title="AI Cargo Monitor",
@@ -24,6 +25,15 @@ graph = build_graph()
 _thread_map: dict[str, str] = {}
 _scenario_runs: dict[str, dict] = {}
 _scenario_tasks: dict[str, asyncio.Task] = {}
+_APPROVAL_RESUME_NODES = {
+    "decision_orchestrator",  # graph interrupts before this node — must be included
+    "route_optimizer",
+    "notification_agent",
+    "inventory_agent",
+    "cold_storage_agent",
+    "insurance_agent",
+    "compliance_agent",
+}
 
 DEFAULT_STATE: dict = {
     "cargo_type": "vaccine",
@@ -133,9 +143,9 @@ async def _cancel_scenario_task(shipment_id: str, *, drop_run: bool = False):
 async def _invoke_graph_update(shipment_id: str, update: dict) -> dict:
     config = _config(shipment_id)
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, lambda: graph.invoke(update, config=config)
-        )
+        ) or {}
         snapshot = graph.get_state(config)
         return {
             "status": "processed",
@@ -154,9 +164,9 @@ async def _resume_graph_after_approval(shipment_id: str, notes: str = "") -> dic
         "human_notes": notes,
         "awaiting_human_approval": False,
     })
-    return await asyncio.get_event_loop().run_in_executor(
+    return await asyncio.get_running_loop().run_in_executor(
         None, lambda: graph.invoke(None, config=config)
-    )
+    ) or {}
 
 
 def _is_anomalous(reading: TelemetryReading) -> bool:
@@ -410,19 +420,36 @@ def get_audit_log(shipment_id: str, limit: int = Query(default=50, le=200)):
 @app.post("/api/shipments/{shipment_id}/approve")
 async def approve_action(shipment_id: str, decision: HumanDecision):
     config = _config(shipment_id)
+    snapshot = graph.get_state(config)
+    if not snapshot or not snapshot.values:
+        raise HTTPException(status_code=404, detail="Shipment not found")
+
+    next_nodes = set(snapshot.next or ())
+    has_pending_approval = bool(snapshot.values.get("awaiting_human_approval", False)) or bool(
+        next_nodes & _APPROVAL_RESUME_NODES
+    )
+    if not has_pending_approval:
+        run = _scenario_runs.get(shipment_id)
+        detail = "No pending human approval for this shipment"
+        if run and run.get("last_error"):
+            detail = f"{detail}. Latest scenario error: {run['last_error']}"
+        raise HTTPException(status_code=409, detail=detail)
+
     graph.update_state(config, {
         "human_decision": decision.decision,
         "human_notes": decision.notes,
         "awaiting_human_approval": False,
     })
-    result = await asyncio.get_event_loop().run_in_executor(
+    result = await asyncio.get_running_loop().run_in_executor(
         None, lambda: graph.invoke(None, config=config)
-    )
+    ) or {}
 
     run = _scenario_runs.get(shipment_id)
     if run and run.get("status") == "paused_for_approval" and run.get("next_index", 0) < run.get("total_readings", 0):
         run["status"] = "running"
         run["last_error"] = None
+        if decision.decision in {"approved", "modified"}:
+            run["auto_approve_actions"] = True
         _touch_run(run)
         task = asyncio.create_task(_run_scenario_in_background(shipment_id))
         _scenario_tasks[shipment_id] = task

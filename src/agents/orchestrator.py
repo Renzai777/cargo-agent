@@ -1,10 +1,10 @@
-import os
 from anthropic import Anthropic
 from src.graph.state import CargoState, AuditEntry
 from src.agents.demo_responses import ORCHESTRATOR_THINKING_DEMO, ORCHESTRATOR_RESPONSE_DEMO
+from src.runtime_config import ANTHROPIC_API_KEY, USE_DEMO_MODE
 
-client = Anthropic()
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+client = Anthropic(api_key=ANTHROPIC_API_KEY or None)
+DEMO_MODE = USE_DEMO_MODE
 
 SYSTEM_PROMPT = """You are the Decision Orchestrator for a pharmaceutical cold-chain monitoring system.
 Your job: determine which interventions are required given a risk incident.
@@ -54,7 +54,7 @@ def orchestrator_agent(state: CargoState) -> dict:
             "recommended_actions": actions,
             "orchestrator_reasoning": ORCHESTRATOR_RESPONSE_DEMO,
             "orchestrator_thinking": ORCHESTRATOR_THINKING_DEMO,
-            "awaiting_human_approval": state.get("severity") in ("HIGH", "CRITICAL"),
+            "awaiting_human_approval": False,
             "audit_log": [AuditEntry(
                 agent_name="orchestrator_agent",
                 action_type="INTERVENTION_DECISION",
@@ -106,7 +106,7 @@ def orchestrator_agent(state: CargoState) -> dict:
         "recommended_actions": actions,
         "orchestrator_reasoning": response_text,
         "orchestrator_thinking": thinking_text,
-        "awaiting_human_approval": state.get("severity") in ("HIGH", "CRITICAL"),
+        "awaiting_human_approval": False,
         "audit_log": [AuditEntry(
             agent_name="orchestrator_agent",
             action_type="INTERVENTION_DECISION",

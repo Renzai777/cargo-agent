@@ -42,16 +42,13 @@ def fetch_status(shipment_id: str) -> dict | None:
         return None
 
 
-def run_scenario(scenario: str, shipment_id: str, mode: str) -> dict | None:
+def run_scenario(scenario: str, shipment_id: str) -> dict | None:
     try:
-        if mode == "full":
-            response = httpx.post(f"{API_BASE}/api/scenarios/{scenario}/run/{shipment_id}", timeout=90)
-        else:
-            response = httpx.post(
-                f"{API_BASE}/api/scenarios/{scenario}/start/{shipment_id}",
-                params={"mode": "playback", "step_delay_ms": 800},
-                timeout=15,
-            )
+        response = httpx.post(
+            f"{API_BASE}/api/scenarios/{scenario}/start/{shipment_id}",
+            params={"mode": "playback", "step_delay_ms": 800},
+            timeout=15,
+        )
         response.raise_for_status()
         return response.json()
     except Exception as exc:
@@ -59,22 +56,6 @@ def run_scenario(scenario: str, shipment_id: str, mode: str) -> dict | None:
         return None
 
 
-def init_shipment(shipment_id: str):
-    try:
-        httpx.post(f"{API_BASE}/api/shipments/{shipment_id}/init", timeout=15).raise_for_status()
-    except Exception as exc:
-        st.error(f"Initialization failed: {exc}")
-
-
-def approve(shipment_id: str, decision: str, notes: str = ""):
-    try:
-        httpx.post(
-            f"{API_BASE}/api/shipments/{shipment_id}/approve",
-            json={"decision": decision, "notes": notes},
-            timeout=30,
-        ).raise_for_status()
-    except Exception as exc:
-        st.error(f"Approval failed: {exc}")
 
 
 def temp_class(temp: float) -> str:
@@ -88,7 +69,6 @@ def temp_class(temp: float) -> str:
 def render_pipeline(status: dict) -> str:
     audit_agents = {entry.get("agent_name") for entry in status.get("audit_log", [])}
     anomalies = status.get("anomalies", [])
-    awaiting = status.get("awaiting_human_approval", False)
     recommended = status.get("recommended_actions", [])
     severity = status.get("severity", "LOW")
     steps = [
@@ -96,12 +76,12 @@ def render_pipeline(status: dict) -> str:
         ("Predictor Agent", "done" if status.get("temperature_forecast") or "predictor_agent" in audit_agents else "waiting", False),
         ("Anomaly Detector", "critical" if anomalies else "done" if ("anomaly_agent" in audit_agents or "monitor_agent" in audit_agents) else "waiting", False),
         ("Risk Assessor", "critical" if severity in ("HIGH", "CRITICAL") else "done" if "risk_agent" in audit_agents else "waiting", False),
-        ("Decision Orchestrator (HITL)", "critical" if awaiting else "done" if (status.get("orchestrator_reasoning") or recommended) else "waiting", False),
-        ("Route Optimizer", "done" if status.get("route_recommendation") else "active" if awaiting and "REROUTE" in recommended else "waiting", True),
-        ("Notification Agent", "done" if status.get("notifications_sent") else "active" if awaiting and "NOTIFY_HOSPITALS" in recommended else "waiting", True),
-        ("Inventory Forecast", "done" if status.get("inventory_impact") else "active" if awaiting and "NOTIFY_HOSPITALS" in recommended else "waiting", True),
-        ("Cold Storage", "done" if status.get("cold_storage_booked") else "active" if awaiting and "COLD_STORAGE" in recommended else "waiting", True),
-        ("Insurance Claim", "done" if status.get("insurance_claim_id") else "active" if awaiting and "FILE_INSURANCE" in recommended else "waiting", True),
+        ("Decision Orchestrator", "critical" if severity in ("HIGH", "CRITICAL") and (status.get("orchestrator_reasoning") or recommended) else "done" if (status.get("orchestrator_reasoning") or recommended) else "waiting", False),
+        ("Route Optimizer", "done" if status.get("route_recommendation") else "active" if "REROUTE" in recommended else "waiting", True),
+        ("Notification Agent", "done" if status.get("notifications_sent") else "active" if "NOTIFY_HOSPITALS" in recommended else "waiting", True),
+        ("Inventory Forecast", "done" if status.get("inventory_impact") else "active" if "NOTIFY_HOSPITALS" in recommended else "waiting", True),
+        ("Cold Storage", "done" if status.get("cold_storage_booked") else "active" if "COLD_STORAGE" in recommended else "waiting", True),
+        ("Insurance Claim", "done" if status.get("insurance_claim_id") else "active" if "FILE_INSURANCE" in recommended else "waiting", True),
         ("Compliance Logger", "done" if status.get("audit_log") else "waiting", True),
     ]
     icons = {"done": "[x]", "active": "[>]", "waiting": "[ ]", "critical": "[!]"}
@@ -127,24 +107,18 @@ with st.sidebar:
     st.divider()
     shipment_id = st.text_input("Shipment ID", value="SHP-DEMO-001")
     selected = st.selectbox("Scenario", list(SCENARIO_LABELS), format_func=lambda key: SCENARIO_LABELS[key])
-    st.caption("Run Live shows the agent flow step-by-step. Run Full auto-completes the whole scenario.")
-    live_col, full_col = st.columns(2)
-    if live_col.button("Run Live", type="primary", use_container_width=True):
-        if run_scenario(selected, shipment_id, "playback"):
+    if st.button("Run Live", type="primary", use_container_width=True):
+        result = run_scenario(selected, shipment_id)
+        if result:
+            st.toast(f"Scenario started: {SCENARIO_LABELS[selected]}", icon="✅")
             st.rerun()
-    if full_col.button("Run Full", use_container_width=True):
-        if run_scenario(selected, shipment_id, "full"):
-            st.rerun()
-    if st.button("Initialize Shipment", use_container_width=True):
-        init_shipment(shipment_id)
-        st.rerun()
     auto_refresh = st.toggle("Auto-refresh dashboard", value=True)
 
 
 status = fetch_status(shipment_id)
 if not status:
     st.markdown("## AI Cargo Monitor")
-    st.warning("No shipment data found. Initialize a shipment or run a scenario from the sidebar.")
+    st.warning("No shipment data found. Select a scenario and click Run Live to start.")
     st.stop()
 
 severity = status.get("severity", "LOW")
@@ -188,7 +162,6 @@ k6.metric("GDP Compliant", "Yes" if status.get("gdp_compliant", True) else "No")
 st.info(
     "Agentic flow: "
     f"predictive monitoring {'active' if (status.get('predicted_breach_minutes') is not None or status.get('temperature_forecast')) else 'standby'} | "
-    f"HITL {'waiting' if status.get('awaiting_human_approval') else 'ready'} | "
     f"cascading actions {triggered_actions(status)}/5 | audit trail {len(audit)} events"
 )
 
@@ -197,28 +170,6 @@ if status.get("predicted_breach_minutes") is not None:
     (st.error if mins <= 10 else st.warning if mins <= 30 else st.info)(
         f"Predicted breach in {mins:.1f} min if the current trend continues."
     )
-
-if status.get("awaiting_human_approval"):
-    st.error("## HUMAN APPROVAL REQUIRED")
-    with st.container(border=True):
-        left, right = st.columns([3, 2])
-        left.markdown("**Orchestrator Reasoning**")
-        left.info(status.get("orchestrator_reasoning", "No reasoning available") or "Awaiting model response...")
-        right.markdown("**Recommended Actions**")
-        for action in status.get("recommended_actions", []):
-            right.markdown(f"- **{action}**")
-        notes = st.text_input("Modification notes", key="modify_notes")
-        a_col, r_col, m_col = st.columns(3)
-        if a_col.button("Approve", type="primary", use_container_width=True):
-            approve(shipment_id, "approved")
-            time.sleep(1)
-            st.rerun()
-        if r_col.button("Reject", use_container_width=True):
-            approve(shipment_id, "rejected", notes="Manual override")
-            st.rerun()
-        if m_col.button("Approve with notes", use_container_width=True):
-            approve(shipment_id, "modified", notes=notes or "Modified approval")
-            st.rerun()
 
 
 row1_left, row1_right = st.columns([3, 2])
@@ -237,7 +188,9 @@ with row1_left:
         lons = [item["longitude"] for item in telemetry]
         temps = [item["temperature_c"] for item in telemetry]
         current = telemetry[-1]
-        progress_pct = min(max(len(telemetry) / max(scenario_run.get("total_readings", len(telemetry) or 1), 1) * 100, 0.0), 100.0) if scenario_run else 0.0
+        processed = scenario_run.get("processed_readings", len(telemetry)) if scenario_run else len(telemetry)
+        total_steps = scenario_run.get("total_readings", processed or 1) if scenario_run else (processed or 1)
+        progress_pct = min(max(processed / max(total_steps, 1) * 100, 0.0), 100.0)
         for idx in range(len(lats) - 1):
             fig.add_trace(go.Scattergeo(lat=[lats[idx], lats[idx + 1]], lon=[lons[idx], lons[idx + 1]], mode="lines", line=dict(width=4, color="#ef4444" if temps[idx] > 8.0 else "#22c55e"), showlegend=False, hoverinfo="skip"))
         fig.add_trace(go.Scattergeo(lat=[current["latitude"]], lon=[current["longitude"]], mode="markers+text", marker=dict(size=22, color="#ef4444" if severity in ("HIGH", "CRITICAL") else "#22c55e", line=dict(width=3, color="white")), text=[f"  {current['temperature_c']:.1f}C"], textposition="middle right", textfont=dict(color="white", size=14, family="monospace"), name="Current Position"))

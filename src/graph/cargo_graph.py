@@ -83,5 +83,4 @@ def build_graph() -> StateGraph:
     _checkpointer = MemorySaver()
     return builder.compile(
         checkpointer=_checkpointer,
-        interrupt_after=["decision_orchestrator"],
     )

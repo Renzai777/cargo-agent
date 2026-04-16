@@ -13,6 +13,7 @@ def test_no_anomalies_with_clean_window(base_state):
 def test_high_zscore_triggers_llm_call(base_state, spike_reading):
     """Z-score > 3 should trigger LLM analysis."""
     state = {**base_state, "latest_reading": spike_reading}
+    from src.agents import anomaly_detector as anomaly_module
     from src.simulator.telemetry import TelemetrySimulator
     sim = TelemetrySimulator("vaccine", "SHP-TEST-001")
     state["telemetry_window"] = sim.generate_batch(10)
@@ -22,6 +23,7 @@ def test_high_zscore_triggers_llm_call(base_state, spike_reading):
         text='{"severity": "CRITICAL", "description": "Severe temperature excursion detected — refrigeration likely failed.", "anomaly_type": "temp_excursion"}'
     )]
 
+    anomaly_module.DEMO_MODE = False
     with patch("src.agents.anomaly_detector.client.messages.create", return_value=mock_response):
         result = anomaly_agent(state)
 

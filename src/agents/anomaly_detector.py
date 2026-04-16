@@ -1,14 +1,14 @@
 import json
-import os
 from datetime import datetime
 import numpy as np
 from anthropic import Anthropic
 from src.graph.state import CargoState, AnomalyRecord, AuditEntry
 from src.agents.demo_responses import ANOMALY_DEMO
+from src.runtime_config import ANTHROPIC_API_KEY, USE_DEMO_MODE
 
-client = Anthropic()
+client = Anthropic(api_key=ANTHROPIC_API_KEY or None)
 Z_SCORE_THRESHOLD = 3.0
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+DEMO_MODE = USE_DEMO_MODE
 
 
 def anomaly_agent(state: CargoState) -> dict:

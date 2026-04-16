@@ -19,10 +19,12 @@ def critical_state(base_state):
 
 
 def test_orchestrator_returns_actions(critical_state):
+    from src.agents import orchestrator as orchestrator_module
     mock_resp = MagicMock()
     mock_resp.stop_reason = "end_turn"
     mock_resp.content = [MagicMock(type="text", text="Triggering REROUTE and NOTIFY_HOSPITALS due to CRITICAL spoilage risk.")]
 
+    orchestrator_module.DEMO_MODE = False
     with patch("src.agents.orchestrator.client.messages.create", return_value=mock_resp):
         result = orchestrator_agent(critical_state)
 
@@ -31,10 +33,12 @@ def test_orchestrator_returns_actions(critical_state):
 
 
 def test_orchestrator_always_includes_compliance(critical_state):
+    from src.agents import orchestrator as orchestrator_module
     mock_resp = MagicMock()
     mock_resp.stop_reason = "end_turn"
     mock_resp.content = [MagicMock(type="text", text="REROUTE NOTIFY_HOSPITALS COLD_STORAGE FILE_INSURANCE")]
 
+    orchestrator_module.DEMO_MODE = False
     with patch("src.agents.orchestrator.client.messages.create", return_value=mock_resp):
         result = orchestrator_agent(critical_state)
 

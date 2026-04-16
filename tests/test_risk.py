@@ -26,6 +26,7 @@ def test_no_anomalies_returns_low_risk(base_state):
 
 
 def test_anomaly_calls_claude_and_returns_risk(state_with_anomaly):
+    from src.agents import risk_assessor as risk_module
     mock_resp = MagicMock()
     mock_resp.stop_reason = "end_turn"
     mock_resp.content = [MagicMock(
@@ -33,6 +34,7 @@ def test_anomaly_calls_claude_and_returns_risk(state_with_anomaly):
         text='{"spoilage_probability": 0.72, "delay_risk": 0.45, "severity": "CRITICAL", "reasoning": "High temp excursion with 8h remaining route time — vaccine viability severely threatened."}'
     )]
 
+    risk_module.DEMO_MODE = False
     with patch("src.agents.risk_assessor.client.messages.create", return_value=mock_resp):
         result = risk_agent(state_with_anomaly)
 
@@ -41,6 +43,7 @@ def test_anomaly_calls_claude_and_returns_risk(state_with_anomaly):
 
 
 def test_risk_audit_entry_written(state_with_anomaly):
+    from src.agents import risk_assessor as risk_module
     mock_resp = MagicMock()
     mock_resp.stop_reason = "end_turn"
     mock_resp.content = [MagicMock(
@@ -48,6 +51,7 @@ def test_risk_audit_entry_written(state_with_anomaly):
         text='{"spoilage_probability": 0.5, "delay_risk": 0.3, "severity": "HIGH", "reasoning": "Moderate risk."}'
     )]
 
+    risk_module.DEMO_MODE = False
     with patch("src.agents.risk_assessor.client.messages.create", return_value=mock_resp):
         result = risk_agent(state_with_anomaly)
 

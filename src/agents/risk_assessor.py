@@ -1,13 +1,13 @@
 import json
-import os
 from anthropic import Anthropic
 from src.graph.state import CargoState, AuditEntry
 from src.tools.spoilage import calculate_spoilage_probability
 from src.tools.routing import get_route_eta
 from src.agents.demo_responses import RISK_DEMO
+from src.runtime_config import ANTHROPIC_API_KEY, USE_DEMO_MODE
 
-client = Anthropic()
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+client = Anthropic(api_key=ANTHROPIC_API_KEY or None)
+DEMO_MODE = USE_DEMO_MODE
 
 RISK_TOOLS = [
     {

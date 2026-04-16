@@ -71,7 +71,7 @@ def predictor_agent(state: CargoState) -> dict:
 
     return {
         "predicted_breach_minutes": predicted_breach_minutes,
-        "temperature_forecast": [round(f, 2) for f in forecast],
+        "temperature_forecast": [float(round(f, 2)) for f in forecast],
         "audit_log": [_audit(detail, state, severity)],
     }
 

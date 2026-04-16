@@ -13,7 +13,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_temp_spike_scenario_reaches_high_severity():
-    graph = build_graph(db_path=":memory:")
+    graph = build_graph()
     shipment_id = "SHP-INTEGRATION-001"
     config = {"configurable": {"thread_id": shipment_id}}
 
@@ -42,6 +42,10 @@ def test_temp_spike_scenario_reaches_high_severity():
         "awaiting_human_approval": False,
         "human_decision": None,
         "human_notes": None,
+        "orchestrator_thinking": None,
+        "predicted_breach_minutes": None,
+        "temperature_forecast": [],
+        "inventory_impact": None,
     }
     graph.update_state(config, initial_state)
 

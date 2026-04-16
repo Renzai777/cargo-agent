@@ -165,14 +165,17 @@ if not status:
         st.rerun()
     st.stop()
 
-severity    = status.get("severity", "LOW")
-spoilage    = status.get("spoilage_probability", 0.0)
-delay_risk  = status.get("delay_risk", 0.0)
-telemetry   = status.get("telemetry_window", [])
-latest      = status.get("latest_reading")
-audit       = status.get("audit_log", [])
-anomalies   = status.get("anomalies", [])
-inv_impact  = status.get("inventory_impact")
+severity          = status.get("severity", "LOW")
+spoilage          = status.get("spoilage_probability", 0.0)
+delay_risk        = status.get("delay_risk", 0.0)
+telemetry         = status.get("telemetry_window", [])
+latest            = status.get("latest_reading")
+audit             = status.get("audit_log", [])
+anomalies         = status.get("anomalies", [])
+inv_impact        = status.get("inventory_impact")
+breach_minutes    = status.get("predicted_breach_minutes")
+temp_forecast     = status.get("temperature_forecast", [])
+orch_thinking     = status.get("orchestrator_thinking")
 
 # ─────────────────────────────── top header ───────────────────────────────────
 hcol1, hcol2 = st.columns([6, 1])
@@ -192,6 +195,23 @@ k6.metric("GDP Compliant",  "✅ Yes" if status.get("gdp_compliant", True) else 
 
 st.divider()
 
+# ─────────────────────────────── Predictive breach banner ─────────────────────
+if breach_minutes is not None:
+    if breach_minutes <= 10:
+        st.error(
+            f"🔮 **PREDICTED BREACH IN {breach_minutes:.1f} min** — "
+            f"Temperature trajectory will exceed 8°C threshold. Immediate action required."
+        )
+    elif breach_minutes <= 30:
+        st.warning(
+            f"🔮 **Predicted breach in {breach_minutes:.1f} min** — "
+            f"Temperature rising. Pre-emptive rerouting recommended."
+        )
+    else:
+        st.info(
+            f"🔮 Predicted breach in {breach_minutes:.1f} min if trend continues — monitoring."
+        )
+
 # ─────────────────────────────── HITL modal ───────────────────────────────────
 if status.get("awaiting_human_approval"):
     st.error("## ⚠️ HUMAN APPROVAL REQUIRED — Pipeline Paused")
@@ -206,6 +226,16 @@ if status.get("awaiting_human_approval"):
                 icon = {"REROUTE": "✈️", "NOTIFY_HOSPITALS": "🏥", "COLD_STORAGE": "❄️",
                         "FILE_INSURANCE": "📄", "CUSTOMS_ESCALATE": "🛂"}.get(act, "▶")
                 st.markdown(f"- {icon} **{act}**")
+
+        if orch_thinking:
+            with st.expander("🧠 Claude's Extended Reasoning Chain (click to expand)", expanded=False):
+                st.markdown(
+                    f'<div style="background:#0d1117;border-left:3px solid #6366f1;'
+                    f'padding:12px 16px;border-radius:4px;font-family:monospace;'
+                    f'font-size:0.82rem;color:#c9d1d9;white-space:pre-wrap;">'
+                    f'{orch_thinking}</div>',
+                    unsafe_allow_html=True
+                )
 
         st.markdown("---")
         col_a, col_r, col_m = st.columns(3)
@@ -249,7 +279,10 @@ with row1_left:
         a = math.sin(dp/2)**2 + math.cos(math.radians(la1)) * math.cos(math.radians(la2)) * math.sin(dl/2)**2
         return 2 * R * math.asin(math.sqrt(a))
 
-    total_dist = _haversine(ROUTE_LATS[0], ROUTE_LONS[0], ROUTE_LATS[2], ROUTE_LONS[2])
+    # Route distance goes NYC → Frankfurt → Nairobi (not straight-line NYC → Nairobi)
+    leg1_dist  = _haversine(ROUTE_LATS[0], ROUTE_LONS[0], ROUTE_LATS[1], ROUTE_LONS[1])
+    leg2_dist  = _haversine(ROUTE_LATS[1], ROUTE_LONS[1], ROUTE_LATS[2], ROUTE_LONS[2])
+    total_dist = leg1_dist + leg2_dist   # full route length along the two legs
 
     fig_map = go.Figure()
 
@@ -288,19 +321,28 @@ with row1_left:
         lt    = telemetry[-1]
         cur_lat, cur_lon = lt["latitude"], lt["longitude"]
 
-        # Progress % along total route
-        dist_travelled = _haversine(ROUTE_LATS[0], ROUTE_LONS[0], cur_lat, cur_lon)
-        prog_pct = min(dist_travelled / total_dist * 100, 100.0)
+        # Progress % along the actual route (NYC → Frankfurt → Nairobi)
+        d_nyc_to_here = _haversine(ROUTE_LATS[0], ROUTE_LONS[0], cur_lat, cur_lon)
+        d_fra_to_here = _haversine(ROUTE_LATS[1], ROUTE_LONS[1], cur_lat, cur_lon)
+        d_here_to_nbo = _haversine(cur_lat, cur_lon, ROUTE_LATS[2], ROUTE_LONS[2])
+
+        # Determine which leg by comparing distance from NYC vs leg1 length
+        on_leg2 = d_nyc_to_here >= leg1_dist * 0.85  # past ~85% of leg1 = on leg2
+        if on_leg2:
+            dist_along_route = leg1_dist + (leg2_dist - d_here_to_nbo)
+        else:
+            dist_along_route = d_nyc_to_here
+        prog_pct = min(max(dist_along_route / total_dist * 100, 0.0), 100.0)
 
         # Current flight leg label
-        d_to_fra = _haversine(cur_lat, cur_lon, ROUTE_LATS[1], ROUTE_LONS[1])
-        d_to_nbo = _haversine(cur_lat, cur_lon, ROUTE_LATS[2], ROUTE_LONS[2])
-        if d_to_fra < 200:
+        if d_fra_to_here < 300:
             cur_segment = "🛬 Approaching Frankfurt"
-        elif d_to_nbo < 500:
-            cur_segment = "✈️ NYC → Frankfurt"
-        else:
+        elif d_here_to_nbo < 500:
+            cur_segment = "🛬 Approaching Nairobi"
+        elif on_leg2:
             cur_segment = "✈️ Frankfurt → Nairobi"
+        else:
+            cur_segment = "✈️ NYC → Frankfurt"
 
         # ── Travelled path segments coloured by temp ──
         for i in range(len(lats) - 1):
@@ -422,13 +464,19 @@ with row1_left:
     st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
 
     # ── Progress bar + stats row beneath map ──
-    p1, p2, p3, p4 = st.columns([3, 1, 1, 1])
-    with p1:
-        st.markdown(f"**Journey Progress** &nbsp; `{prog_pct:.1f}%`")
-        st.progress(prog_pct / 100)
-    p2.metric("Readings", n_readings)
-    p3.metric("Travelled", f"{prog_pct/100*total_dist:,.0f} km")
-    p4.metric("Remaining", f"{(1-prog_pct/100)*total_dist:,.0f} km")
+    # Use the route-aware dist_along_route when available, otherwise derive from pct
+    travelled_km = dist_along_route if telemetry else 0.0
+    remaining_km = max(total_dist - travelled_km, 0.0)
+
+    st.markdown(
+        f"**Journey Progress** &nbsp; `{prog_pct:.1f}%` &nbsp;&nbsp; "
+        f"<span style='color:#9ca3af;font-size:0.85rem'>"
+        f"✈️ {travelled_km:,.0f} km travelled &nbsp;·&nbsp; "
+        f"{remaining_km:,.0f} km remaining &nbsp;·&nbsp; "
+        f"{n_readings} sensor readings</span>",
+        unsafe_allow_html=True,
+    )
+    st.progress(prog_pct / 100)
 
 # ── Current reading + gauges ──
 with row1_right:
@@ -498,13 +546,37 @@ if telemetry:
             line=dict(color="#ef4444", width=2), marker=dict(size=4),
             name="Temp °C", fill="tozeroy", fillcolor="rgba(239,68,68,0.1)"
         ))
+        # ── Predictive forecast overlay (dashed orange) ──
+        if temp_forecast:
+            fc_x = list(range(len(times), len(times) + len(temp_forecast)))
+            # Bridge: connect last real reading to first forecast point
+            bridge_x = [times[-1]] + fc_x
+            bridge_y = [temps_all[-1]] + temp_forecast
+            fig_t.add_trace(go.Scatter(
+                x=bridge_x, y=bridge_y, mode="lines",
+                line=dict(color="#f97316", width=2, dash="dot"),
+                name="AI Forecast",
+                fillcolor="rgba(249,115,22,0.06)", fill="tozeroy",
+            ))
+            # Mark breach crossing if predicted
+            if breach_minutes is not None:
+                breach_step = int(breach_minutes * 60 / 30)  # 30s intervals
+                if 0 <= breach_step < len(temp_forecast):
+                    fig_t.add_vline(
+                        x=len(times) + breach_step,
+                        line_dash="dot", line_color="#ef4444",
+                        annotation_text=f"⚠️ {breach_minutes:.0f}min",
+                        annotation_font_color="#ef4444",
+                    )
         fig_t.add_hline(y=8.0, line_dash="dash", line_color="#f59e0b", annotation_text="Max 8°C")
         fig_t.add_hline(y=2.0, line_dash="dash", line_color="#3b82f6", annotation_text="Min 2°C")
         fig_t.update_layout(
-            title="🌡️ Temperature (°C)", height=200,
+            title="🌡️ Temperature (°C)", height=220,
             paper_bgcolor="#0f0f1a", plot_bgcolor="#0a0a14",
             font_color="white", margin=dict(l=30, r=10, t=40, b=30),
-            yaxis=dict(gridcolor="#1a1a2e"), xaxis=dict(gridcolor="#1a1a2e")
+            yaxis=dict(gridcolor="#1a1a2e"), xaxis=dict(gridcolor="#1a1a2e"),
+            legend=dict(orientation="h", x=0, y=1.15, font=dict(size=9),
+                        bgcolor="rgba(0,0,0,0)"),
         )
         st.plotly_chart(fig_t, use_container_width=True)
 

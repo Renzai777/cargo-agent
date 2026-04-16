@@ -3,6 +3,13 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Send
 from src.graph.state import CargoState
+
+_db_conn: sqlite3.Connection | None = None
+
+
+def get_db_connection() -> sqlite3.Connection | None:
+    """Return the shared SQLite connection so callers can purge checkpoints."""
+    return _db_conn
 from src.agents.monitor import monitor_agent
 from src.agents.predictor import predictor_agent
 from src.agents.anomaly_detector import anomaly_agent
@@ -77,8 +84,9 @@ def build_graph(db_path: str = "cargo.db") -> StateGraph:
                  "cold_storage_agent", "insurance_agent", "compliance_agent"]:
         builder.add_edge(node, END)
 
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
+    global _db_conn
+    _db_conn = sqlite3.connect(db_path, check_same_thread=False)
+    checkpointer = SqliteSaver(_db_conn)
 
     return builder.compile(
         checkpointer=checkpointer,

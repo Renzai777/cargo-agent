@@ -611,15 +611,3 @@ The system is designed around pharmaceutical Good Distribution Practice (GDP) re
 
 ---
 
-## Hackathon Context
-
-Built for **UMD Agentic AI Hackathon 2026, Case 6: Pharmaceutical Cold-Chain Intelligence**.
-
-The challenge required designing a multi-agent system that could:
-1. Monitor pharmaceutical shipments in real time
-2. Detect anomalies and predict failures proactively  
-3. Autonomously coordinate responses across multiple operational domains
-4. Maintain human oversight for high-stakes decisions
-5. Produce a GDP-compliant audit trail
-
-The system demonstrates three distinct Claude API capabilities (tool use, extended thinking, prompt caching) and a production-quality LangGraph multi-agent architecture — not just a prototype chatbot.

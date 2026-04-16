@@ -1,11 +1,14 @@
 import json
+import os
 from datetime import datetime
 import numpy as np
 from anthropic import Anthropic
 from src.graph.state import CargoState, AnomalyRecord, AuditEntry
+from src.agents.demo_responses import ANOMALY_DEMO
 
 client = Anthropic()
 Z_SCORE_THRESHOLD = 3.0
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 
 def anomaly_agent(state: CargoState) -> dict:
@@ -26,6 +29,26 @@ def anomaly_agent(state: CargoState) -> dict:
 
     if z_score < Z_SCORE_THRESHOLD:
         return {"anomalies": [], "audit_log": [_audit(f"Z-score {z_score:.2f} below threshold", state)]}
+
+    # Demo mode: skip real API call, use pre-scripted response
+    if DEMO_MODE:
+        result = ANOMALY_DEMO
+        anomaly = AnomalyRecord(
+            shipment_id=state["shipment_id"],
+            anomaly_type=result["anomaly_type"],
+            severity=result["severity"],
+            z_score=round(z_score, 2),
+            description=result["description"],
+            raw_value=reading.temperature_c,
+            threshold_value=8.0 if state["cargo_type"] == "vaccine" else 25.0,
+        )
+        return {
+            "anomalies": [anomaly],
+            "audit_log": [_audit(
+                f"[DEMO] Z-score {z_score:.2f} — classified as {result['severity']}: {result['description'][:80]}",
+                state
+            )],
+        }
 
     ANOMALY_SYSTEM = (
         "You are an anomaly classification engine for pharmaceutical cold-chain logistics. "

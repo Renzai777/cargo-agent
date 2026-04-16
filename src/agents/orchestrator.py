@@ -1,7 +1,10 @@
+import os
 from anthropic import Anthropic
 from src.graph.state import CargoState, AuditEntry
+from src.agents.demo_responses import ORCHESTRATOR_THINKING_DEMO, ORCHESTRATOR_RESPONSE_DEMO
 
 client = Anthropic()
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 SYSTEM_PROMPT = """You are the Decision Orchestrator for a pharmaceutical cold-chain monitoring system.
 Your job: determine which interventions are required given a risk incident.
@@ -44,27 +47,58 @@ def orchestrator_agent(state: CargoState) -> dict:
 
     prompt += "\nList required actions (use exact action names) and explain your reasoning."
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=16000,
-        # Extended thinking — Claude deliberates before deciding
-        thinking={"type": "enabled", "budget_tokens": 10000},
-        # Prompt caching — system prompt cached for repeated calls
-        system=[{
-            "type": "text",
-            "text": SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
-        }],
-        messages=[{"role": "user", "content": prompt}],
-    )
+    # Demo mode: use pre-scripted responses (no API key needed)
+    if DEMO_MODE:
+        actions = [a for a in ACTION_FLAGS if a in ORCHESTRATOR_RESPONSE_DEMO]
+        return {
+            "recommended_actions": actions,
+            "orchestrator_reasoning": ORCHESTRATOR_RESPONSE_DEMO,
+            "orchestrator_thinking": ORCHESTRATOR_THINKING_DEMO,
+            "awaiting_human_approval": state.get("severity") in ("HIGH", "CRITICAL"),
+            "audit_log": [AuditEntry(
+                agent_name="orchestrator_agent",
+                action_type="INTERVENTION_DECISION",
+                action_detail=f"[DEMO] Actions decided: {', '.join(actions)}",
+                reasoning=ORCHESTRATOR_RESPONSE_DEMO[:500],
+                severity=state.get("severity", "LOW"),
+                gdp_compliant=True,
+                shipment_id=state["shipment_id"],
+            )],
+        }
 
-    # Extract thinking chain and decision text separately
-    thinking_text = next(
-        (b.thinking for b in response.content if b.type == "thinking"), ""
-    )
-    response_text = next(
-        (b.text for b in response.content if b.type == "text"), ""
-    )
+    thinking_text = ""
+    try:
+        # Extended thinking — Claude deliberates before deciding (requires claude-sonnet-4-6+)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=16000,
+            thinking={"type": "enabled", "budget_tokens": 10000},
+            system=[{
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        thinking_text = next(
+            (b.thinking for b in response.content if b.type == "thinking"), ""
+        )
+        response_text = next(
+            (b.text for b in response.content if b.type == "text"), ""
+        )
+    except Exception:
+        # Fallback: standard call without extended thinking
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=[{
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = response.content[0].text
 
     actions = [a for a in ACTION_FLAGS if a in response_text]
 

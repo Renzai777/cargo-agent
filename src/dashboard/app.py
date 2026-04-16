@@ -229,132 +229,206 @@ row1_left, row1_right = st.columns([3, 2])
 
 # ── Live map ──
 with row1_left:
-    st.markdown("### 📍 Live Shipment Route — NYC → Frankfurt → Nairobi")
+    import math
 
-    # Always draw the full route backbone (even before telemetry arrives)
+    # Route waypoints
     ROUTE_LATS = [40.7128, 50.1109, -1.2921]
-    ROUTE_LONS = [-74.0060, 8.6821, 36.8219]
-    CITIES     = ["New York (Origin)", "Frankfurt (Transit Hub)", "Nairobi (Destination)"]
+    ROUTE_LONS = [-74.0060,  8.6821, 36.8219]
+    CITIES     = ["New York", "Frankfurt", "Nairobi"]
+    CITY_ROLES = ["Origin", "Transit Hub", "Destination"]
+
+    sev_banner_color = {"LOW": "#22c55e", "MEDIUM": "#eab308",
+                        "HIGH": "#f97316", "CRITICAL": "#ef4444"}.get(severity, "#9ca3af")
+    pos_color = {"HIGH": "#ef4444", "CRITICAL": "#ef4444",
+                 "MEDIUM": "#f59e0b"}.get(severity, "#22c55e")
+
+    # ── Compute journey progress for zoom + progress bar ──
+    def _haversine(la1, lo1, la2, lo2):
+        R = 6371
+        dl = math.radians(lo2 - lo1); dp = math.radians(la2 - la1)
+        a = math.sin(dp/2)**2 + math.cos(math.radians(la1)) * math.cos(math.radians(la2)) * math.sin(dl/2)**2
+        return 2 * R * math.asin(math.sqrt(a))
+
+    total_dist = _haversine(ROUTE_LATS[0], ROUTE_LONS[0], ROUTE_LATS[2], ROUTE_LONS[2])
 
     fig_map = go.Figure()
 
-    # ── Full route backbone (grey dashed) ──
+    # ── Full planned route backbone (dim dashed) ──
     fig_map.add_trace(go.Scattergeo(
-        lat=ROUTE_LATS, lon=ROUTE_LONS,
-        mode="lines",
-        line=dict(width=2, color="rgba(100,120,160,0.5)", dash="dot"),
-        name="Planned Route",
-        hoverinfo="skip",
-        showlegend=False,
+        lat=ROUTE_LATS, lon=ROUTE_LONS, mode="lines",
+        line=dict(width=2, color="rgba(100,120,180,0.35)", dash="dot"),
+        hoverinfo="skip", showlegend=False,
     ))
 
-    # ── City waypoint labels ──
+    # ── City pins ──
+    city_colors = [pos_color if i == 1 else "#3b82f6" for i in range(3)]
     fig_map.add_trace(go.Scattergeo(
         lat=ROUTE_LATS, lon=ROUTE_LONS,
         mode="markers+text",
-        marker=dict(size=10, color=["#3b82f6", "#8b5cf6", "#3b82f6"],
+        marker=dict(size=12, color=city_colors,
                     symbol="circle", line=dict(width=2, color="white")),
-        text=CITIES,
+        text=[f"<b>{c}</b><br><i>{r}</i>" for c, r in zip(CITIES, CITY_ROLES)],
         textposition=["middle right", "top center", "middle right"],
-        textfont=dict(color="white", size=11),
+        textfont=dict(color="white", size=10),
         name="Waypoints",
         hovertemplate="%{text}<extra></extra>",
     ))
+
+    prog_pct   = 0.0
+    cur_lat    = ROUTE_LATS[0]
+    cur_lon    = ROUTE_LONS[0]
+    n_readings = 0
+    cur_segment = "Awaiting departure"
 
     if telemetry:
         lats  = [r["latitude"]  for r in telemetry]
         lons  = [r["longitude"] for r in telemetry]
         temps = [r["temperature_c"] for r in telemetry]
+        n_readings = len(telemetry)
         lt    = telemetry[-1]
+        cur_lat, cur_lon = lt["latitude"], lt["longitude"]
 
-        # ── Actual travelled path — coloured red/green by temp ──
-        # Split into segments so each can be a different color
+        # Progress % along total route
+        dist_travelled = _haversine(ROUTE_LATS[0], ROUTE_LONS[0], cur_lat, cur_lon)
+        prog_pct = min(dist_travelled / total_dist * 100, 100.0)
+
+        # Current flight leg label
+        d_to_fra = _haversine(cur_lat, cur_lon, ROUTE_LATS[1], ROUTE_LONS[1])
+        d_to_nbo = _haversine(cur_lat, cur_lon, ROUTE_LATS[2], ROUTE_LONS[2])
+        if d_to_fra < 200:
+            cur_segment = "🛬 Approaching Frankfurt"
+        elif d_to_nbo < 500:
+            cur_segment = "✈️ NYC → Frankfurt"
+        else:
+            cur_segment = "✈️ Frankfurt → Nairobi"
+
+        # ── Travelled path segments coloured by temp ──
         for i in range(len(lats) - 1):
-            seg_color = "#ef4444" if temps[i] > 8.0 else "#22c55e"
+            seg_col = "#ef4444" if temps[i] > 8.0 else "#22c55e"
             fig_map.add_trace(go.Scattergeo(
-                lat=[lats[i], lats[i+1]],
-                lon=[lons[i], lons[i+1]],
-                mode="lines",
-                line=dict(width=3, color=seg_color),
-                showlegend=False,
-                hoverinfo="skip",
+                lat=[lats[i], lats[i+1]], lon=[lons[i], lons[i+1]],
+                mode="lines", line=dict(width=4, color=seg_col),
+                showlegend=False, hoverinfo="skip",
             ))
 
-        # ── Telemetry reading dots along path ──
-        dot_colors = ["#ef4444" if t > 8.0 else "#22c55e" for t in temps[:-1]]
-        if dot_colors:
-            fig_map.add_trace(go.Scattergeo(
-                lat=lats[:-1], lon=lons[:-1],
-                mode="markers",
-                marker=dict(size=6, color=dot_colors, opacity=0.75,
-                            line=dict(width=0.5, color="white")),
-                text=[f"{t}°C" for t in temps[:-1]],
-                hovertemplate="Reading: %{text}<extra></extra>",
-                name="Sensor Readings",
-            ))
-
-        # ── Current position — large pulsing icon ──
-        pos_color = "#ef4444" if severity in ("HIGH", "CRITICAL") else \
-                    "#f59e0b" if severity == "MEDIUM" else "#22c55e"
+        # ── Fading historical dots (most recent = opaque, oldest = transparent) ──
+        n = len(lats)
+        opacities = [0.15 + 0.7 * (i / max(n-1, 1)) for i in range(n)]
+        sizes     = [4 + 4 * (i / max(n-1, 1)) for i in range(n)]
+        dot_colors = ["#ef4444" if t > 8.0 else "#22c55e" for t in temps]
         fig_map.add_trace(go.Scattergeo(
-            lat=[lt["latitude"]], lon=[lt["longitude"]],
-            mode="markers+text",
-            marker=dict(size=20, color=pos_color,
-                        symbol="circle",
-                        line=dict(width=3, color="white")),
-            text=[f"  {lt['temperature_c']}°C"],
-            textposition="middle right",
-            textfont=dict(color=pos_color, size=13, family="monospace"),
-            name="Current Position",
-            hovertemplate=f"<b>Current Position</b><br>"
-                          f"Temp: {lt['temperature_c']}°C<br>"
-                          f"Humidity: {lt['humidity_pct']}%<br>"
-                          f"Altitude: {int(lt['altitude_m']):,}m<br>"
-                          f"Status: {lt['customs_status']}<extra></extra>",
+            lat=lats[:-1], lon=lons[:-1],
+            mode="markers",
+            marker=dict(
+                size=sizes[:-1],
+                color=dot_colors[:-1],
+                opacity=opacities[:-1],
+                line=dict(width=0),
+            ),
+            text=[f"{t:.1f}°C" for t in temps[:-1]],
+            hovertemplate="Reading: %{text}<extra></extra>",
+            name="Sensor History",
         ))
 
-    # ── Severity banner overlay ──
-    sev_banner_color = {"LOW": "#22c55e", "MEDIUM": "#eab308",
-                        "HIGH": "#f97316", "CRITICAL": "#ef4444"}.get(severity, "#9ca3af")
+        # ── Ripple ring (larger transparent circle behind current dot) ──
+        # Convert pos_color hex (#rrggbb) → rgba with 0.6 alpha for the ring
+        _r = int(pos_color[1:3], 16)
+        _g = int(pos_color[3:5], 16)
+        _b = int(pos_color[5:7], 16)
+        ring_color = f"rgba({_r},{_g},{_b},0.55)"
+        fig_map.add_trace(go.Scattergeo(
+            lat=[cur_lat], lon=[cur_lon], mode="markers",
+            marker=dict(size=40, color="rgba(0,0,0,0)",
+                        line=dict(width=3, color=ring_color)),
+            hoverinfo="skip", showlegend=False,
+        ))
+
+        # ── Current position dot ──
+        fig_map.add_trace(go.Scattergeo(
+            lat=[cur_lat], lon=[cur_lon],
+            mode="markers+text",
+            marker=dict(size=22, color=pos_color,
+                        symbol="circle",
+                        line=dict(width=3, color="white")),
+            text=[f"  {lt['temperature_c']:.1f}°C"],
+            textposition="middle right",
+            textfont=dict(color="white", size=14, family="monospace"),
+            name="▶ Current Position",
+            hovertemplate=(
+                f"<b>📍 Current Position</b><br>"
+                f"Lat: {cur_lat:.3f}°  Lon: {cur_lon:.3f}°<br>"
+                f"Temp: <b>{lt['temperature_c']}°C</b><br>"
+                f"Humidity: {lt['humidity_pct']}%<br>"
+                f"Altitude: {int(lt['altitude_m']):,}m<br>"
+                f"Customs: {lt['customs_status']}<extra></extra>"
+            ),
+        ))
+
+    # ── Dynamic zoom: tighter box around the active segment ──
+    pad = 18
+    if telemetry:
+        lon_min = min(min(lons), ROUTE_LONS[0], ROUTE_LONS[2]) - pad
+        lon_max = max(max(lons), ROUTE_LONS[0], ROUTE_LONS[2]) + pad
+        lat_min = min(min(lats), ROUTE_LATS[0], ROUTE_LATS[2]) - pad
+        lat_max = max(max(lats), ROUTE_LATS[0], ROUTE_LATS[2]) + pad
+    else:
+        lon_min, lon_max = -85, 50
+        lat_min, lat_max = -15, 62
 
     fig_map.update_layout(
         geo=dict(
             projection_type="natural earth",
-            showland=True,       landcolor="#1a2035",
-            showocean=True,      oceancolor="#0d1520",
-            showlakes=True,      lakecolor="#0d1520",
+            showland=True,        landcolor="#1a2035",
+            showocean=True,       oceancolor="#0d1520",
+            showlakes=True,       lakecolor="#0d1520",
             showrivers=False,
-            showcountries=True,  countrycolor="rgba(80,100,140,0.4)",
-            showcoastlines=True, coastlinecolor="rgba(80,100,140,0.5)",
+            showcountries=True,   countrycolor="rgba(80,100,160,0.45)",
+            showcoastlines=True,  coastlinecolor="rgba(80,100,160,0.55)",
             showframe=False,
             bgcolor="#0f0f1a",
-            # Fit view to the NYC→Nairobi corridor
-            lonaxis=dict(range=[-90, 55]),
-            lataxis=dict(range=[-20, 65]),
+            lonaxis=dict(range=[lon_min, lon_max]),
+            lataxis=dict(range=[lat_min, lat_max]),
         ),
         paper_bgcolor="#0f0f1a",
-        plot_bgcolor="#0f0f1a",
         font_color="white",
         margin=dict(l=0, r=0, t=0, b=0),
-        height=360,
+        height=340,
         legend=dict(
             orientation="h", x=0.01, y=0.01,
-            bgcolor="rgba(15,15,26,0.8)",
-            bordercolor="rgba(80,100,140,0.4)",
-            borderwidth=1,
-            font=dict(size=11),
+            bgcolor="rgba(15,15,26,0.85)",
+            bordercolor="rgba(80,100,160,0.4)",
+            borderwidth=1, font=dict(size=11),
         ),
-        annotations=[dict(
-            text=f"● SEVERITY: {severity}",
-            x=0.01, y=0.98, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=sev_banner_color, size=13, family="monospace"),
-            bgcolor="rgba(15,15,26,0.8)",
-            bordercolor=sev_banner_color,
-            borderwidth=1, borderpad=5,
-        )],
+        annotations=[
+            dict(
+                text=f"● {severity}",
+                x=0.01, y=0.98, xref="paper", yref="paper",
+                showarrow=False,
+                font=dict(color=sev_banner_color, size=13, family="monospace"),
+                bgcolor="rgba(15,15,26,0.85)",
+                bordercolor=sev_banner_color, borderwidth=1, borderpad=5,
+            ),
+            dict(
+                text=f"{cur_segment}",
+                x=0.99, y=0.98, xref="paper", yref="paper",
+                showarrow=False,
+                font=dict(color="#a0aec0", size=11, family="monospace"),
+                bgcolor="rgba(15,15,26,0.85)",
+                bordercolor="rgba(80,100,160,0.4)", borderwidth=1, borderpad=5,
+                xanchor="right",
+            ),
+        ],
     )
     st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
+
+    # ── Progress bar + stats row beneath map ──
+    p1, p2, p3, p4 = st.columns([3, 1, 1, 1])
+    with p1:
+        st.markdown(f"**Journey Progress** &nbsp; `{prog_pct:.1f}%`")
+        st.progress(prog_pct / 100)
+    p2.metric("Readings", n_readings)
+    p3.metric("Travelled", f"{prog_pct/100*total_dist:,.0f} km")
+    p4.metric("Remaining", f"{(1-prog_pct/100)*total_dist:,.0f} km")
 
 # ── Current reading + gauges ──
 with row1_right:

@@ -1,10 +1,13 @@
 import json
+import os
 from anthropic import Anthropic
 from src.graph.state import CargoState, AuditEntry
 from src.tools.spoilage import calculate_spoilage_probability
 from src.tools.routing import get_route_eta
+from src.agents.demo_responses import RISK_DEMO
 
 client = Anthropic()
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 RISK_TOOLS = [
     {
@@ -56,6 +59,24 @@ def risk_agent(state: CargoState) -> dict:
                 action_detail="No anomalies detected — risk is LOW",
                 reasoning="No anomaly records in state",
                 severity="LOW",
+                gdp_compliant=True,
+                shipment_id=state["shipment_id"],
+            )],
+        }
+
+    # Demo mode: skip real API call, use pre-scripted response
+    if DEMO_MODE:
+        result = RISK_DEMO
+        return {
+            "spoilage_probability": result["spoilage_probability"],
+            "delay_risk": result["delay_risk"],
+            "severity": result["severity"],
+            "audit_log": [AuditEntry(
+                agent_name="risk_agent",
+                action_type="RISK_ASSESSMENT",
+                action_detail=f"[DEMO] Spoilage: {result['spoilage_probability']:.0%}, Delay: {result['delay_risk']:.0%}",
+                reasoning=result["reasoning"],
+                severity=result["severity"],
                 gdp_compliant=True,
                 shipment_id=state["shipment_id"],
             )],

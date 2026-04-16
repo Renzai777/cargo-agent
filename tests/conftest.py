@@ -39,7 +39,6 @@ def spike_reading():
 
 @pytest.fixture
 def base_state(sample_reading):
-    from datetime import datetime
     return {
         "shipment_id": "SHP-TEST-001",
         "cargo_type": "vaccine",
@@ -60,6 +59,7 @@ def base_state(sample_reading):
         "cold_storage_booked": False,
         "cold_storage_facility": None,
         "insurance_claim_id": None,
+        "inventory_impact": None,
         "audit_log": [],
         "gdp_compliant": True,
         "awaiting_human_approval": False,

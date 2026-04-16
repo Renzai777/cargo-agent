@@ -1,0 +1,7 @@
+function claude-company {
+    $env:ANTHROPIC_AUTH_TOKEN="sk-8fOfxH5Q2zSDZvr4okqaog"
+    $env:ANTHROPIC_BASE_URL="https://genai.kion.cloud"
+    $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="1"
+
+    claude
+}

@@ -12,3 +12,11 @@ build/
 .venv/
 venv/
 *.log
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+data/synthetic/
+.DS_Store
+Thumbs.db
+*.sqlite3
